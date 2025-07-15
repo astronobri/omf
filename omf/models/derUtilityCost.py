@@ -187,6 +187,7 @@ def work(modelDir, inputDict):
 	else: ## Use the Wholesale Energy Rate Curve (.csv) file
 		## NOTE: This method results in discrepant outputs compared to the urdb_response input method
 		scenario['ElectricTariff']['tou_energy_rates_per_kwh'] = energy_rate_array#.tolist()
+		scenario['add_tou_energy_rates_to_urdb_rate'] = True
 
 	## Add fossil fuel generator to input scenario, if enabled
 	if inputDict['fossilGenerator'] == 'Yes' and float(inputDict['number_devices_GEN']) > 0:
