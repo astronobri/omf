@@ -190,7 +190,7 @@ def work(modelDir, inputDict):
 
 			## Get the tier thresholds for the current rate period
 			if period_number >= len(tier_thresholds_by_period):
-				raise ValueError(f"Period number {period_number} not found in energyratestructure in the Wholesale Energy Rate Structure (.json) file.")
+				raise ValueError(f"Period number {period_number} not found in energyratestructure in the Residential Rate Structure (.json) file.")
 
 			thresholds = tier_thresholds_by_period[period_number]
 			monthly_kwh = energy_monthly_cumulative_sum[hour_index]
@@ -201,7 +201,7 @@ def work(modelDir, inputDict):
 					energy_rate_array[hour_index] = rate
 					break
 	else:
-		raise Exception('No energy rate structure information was found in the Wholesale Energy Rate Structure (.json) file. Please include this information when creating the JSON or select a different method for input.')
+		raise Exception('No energy rate structure information was found in the Residential Rate Structure (.json) file. Please include this information when creating the JSON or select a different method for input.')
 
 	########################################################################################################################
 	## Run REopt.jl solver
@@ -483,8 +483,8 @@ def work(modelDir, inputDict):
 		single_device_monthlyTESS_consumption_total = [sum(single_device_vbatPower[s:f]) for s, f in monthHours]
 
 		## Add up all the consumer savings for the total TESS
-		savings_year1_monthly_single_device = single_device_subsidy_year1_array + single_device_compensation_year1_array
-		savings_allyears_single_device = single_device_subsidy_allyears_array + single_device_compensation_allyears_array 
+		#savings_year1_monthly_single_device = single_device_subsidy_year1_array + single_device_compensation_year1_array
+		#savings_allyears_single_device = single_device_subsidy_allyears_array + single_device_compensation_allyears_array 
 
 		## Save relevant variables for calculating the demand cost savings later on
 		thermal_device_savings[device_result] = {
@@ -495,7 +495,7 @@ def work(modelDir, inputDict):
 
 		## Savings Breakdown Per Thermal Technology savings variables
 		## NOTE: This is where the html variables outData['vbatResults_wh_savings_allyears'], outData['vbatResults_hp_savings_allyears'], and outData['vbatResults_ac_savings_allyears'] are saved.
-		outData[device_result+'_savings_allyears'] = list(savings_allyears_single_device)
+		#outData[device_result+'_savings_allyears'] = list(savings_allyears_single_device)
 		outData[device_result+'_check'] = 'enabled'
 	
 	########################################################################################################################################################
@@ -739,7 +739,6 @@ def work(modelDir, inputDict):
 	GEN_demand = np.array(generator)
 	demand = np.array(demand)
 
-
 	## Convert negative zeros into positive zeros to avoid sign errors
 	demand[demand == -0.0] = 0.0
 	BESS_demand[BESS_demand == -0.0] = 0.0 
@@ -835,6 +834,7 @@ def work(modelDir, inputDict):
 			
 			## Demand (kW) savings
 			## NOTE: Savings Breakdown of Thermal Technologies plot variables: vbatResults_ac_peakDemand_savings_allyears, vbatResults_wh_peakDemand_savings_allyears, vbatResults_hp_peakDemand_savings_allyears
+			device_peakDemand_savings_monthly[device_peakDemand_savings_monthly == -0.0] = 0.0 ## avoid sign errors
 			device_peakDemand_savings_allyears = np.full(projectionLength, sum(device_peakDemand_savings_monthly))
 			outData[device_name+'_peakDemand_savings_allyears'] = device_peakDemand_savings_allyears.tolist()
 
@@ -1185,13 +1185,13 @@ def new(modelDir):
 		demand_curve = f.read()
 	with open(pJoin(__neoMetaModel__._omfDir,'static','testFiles','derConsumer','open-meteo-denverCO-noheaders.csv')) as f:
 		temperature_curve = f.read()
-	with open(pJoin(__neoMetaModel__._omfDir,'static','testFiles','derUtilityCost','exampleWholesaleRateStructure.json')) as jsonFile:
+	with open(pJoin(__neoMetaModel__._omfDir,'static','testFiles','derConsumer','example_residential_tariff.json')) as jsonFile:
 		residential_rate_curve = json.load(jsonFile)
 	#with open(pJoin(__neoMetaModel__._omfDir,'static','testFiles','derUtilityCost','TODrate66a13566e90ecdb7d40581d2.json')) as jsonFile:
 	#	residential_rate_curve = json.load(jsonFile)
 	#with open(pJoin(__neoMetaModel__._omfDir,'static','testFiles','derConsumer','TOU_rate_schedule.csv')) as f:
 	#	energy_rates_per_kwh = f.read()
-	
+		
 	defaultInputs = {
 		## TODO: maybe incorporate float, int, bool types on the html side instead of only strings
 
@@ -1201,6 +1201,8 @@ def new(modelDir):
 		'created': str(datetime.datetime.now()),
 
 		## REopt inputs:
+		#'residentialRateCurveFileName': 'TOU_rate_schedule.csv',
+		#'residentialRateCurveFile': energy_rates_per_kwh,
 		'urdbLabel': '66a13566e90ecdb7d40581d2', # Brighton, CO Residential Time of Day residential rate https://apps.openei.org/USURDB/rate/view/66a13566e90ecdb7d40581d2#3__Energy
 		'latitude': '39.969753', ## Brighton, CO
 		'longitude': '-104.812599', ## Brighton, CO
@@ -1210,10 +1212,8 @@ def new(modelDir):
 		'temperatureFileName': 'open-meteo-denverCO-noheaders.csv',
 		'temperatureCurve': temperature_curve,
 		'urdbLabelBool': False,
-		'residentialRateStructureFileName': 'exampleWholesaleRateStructure.json',
+		'residentialRateStructureFileName': 'example_residential_tariff.json',
 		'residentialRateStructureFile': residential_rate_curve,
-		#'residentialRateCurveFileName': 'TOU_rate_schedule.csv',
-		#'residentialRateCurveFile': energy_rates_per_kwh,
 
 		## Financial Inputs
 		'projectionLength': '25',
@@ -1264,7 +1264,7 @@ def new(modelDir):
 		'load_type_ac': '1',
 		'unitDeviceCost_ac': '13', #a cheap wifi-enabled smart outlet to plug the AC into is about $13 (see https://www.lowes.com/pd/Enbrighten-125-Volt-1-Outlet-Indoor-Smart-Plug/1003202046)
 		'unitUpkeepCost_ac': '0.0', ## NOTE: Input is currently hidden in HTML
-		'power_ac': '0.5', ## In-window air unit power
+		'power_ac': '5.6', ## Central air ~ 5.6; In-window air unit ~ 0.5
 		'capacitance_ac': '2',
 		'resistance_ac': '2',
 		'cop_ac': '2.5',
