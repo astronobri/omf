@@ -4,10 +4,10 @@
 	<script src="{{pathPrefix}}/static/highcharts4.src.js"></script>
 	<!-- Include Plotly -->
 	<!-- onload function ensures plotly is loaded to display graphs -->
-	<script type="text/javascript" src="{{pathPrefix}}/static/plotly-1.50.1.min.js" onload="plotGraph()"></script>
+	<script type="text/javascript" src="{{pathPrefix}}/static/plotly-1.50.1.min.js" onload="plotGraph()"></script> 
 	<script>
-		function plotGraph(graphTitle, graphData ) {
-			Plotly.newPlot(graphTitle, JSON.parse( graphData ) || {} )
+		function plotGraph(graphTitle, graphData, graphLayout) {
+			Plotly.newPlot(graphTitle, JSON.parse(graphData), JSON.parse(graphLayout) || {} )
 		}
 	</script>
 	<!-- Add Plotly plots -->
@@ -293,6 +293,10 @@
 				<input type="text" id="number_devices_BESS" name="number_devices_BESS" value="{{allInputDataDict.number_devices_BESS}}" required="required">
 			</div>
 			<div class="shortInput">
+				<label class="tooltip">Portion of Charge Used by Utility (%)<span class="classic"> The maximum percentage of full charge that the utility will use at any time. </span></label>
+				<input type="text" id="utility_BESS_portion" name="utility_BESS_portion" value="{{allInputDataDict.utility_BESS_portion}}" required="required"/>
+			</div>
+			<div class="shortInput">
 				<label class="tooltip">Home Battery Power Capacity (kW)<span class="classic">Specify the home chemical battery power capacity in kW for each individual battery enrolled by a member-consumer.</span></label>
 				<input type="text" id="BESS_kw" name="BESS_kw" value="{{allInputDataDict.BESS_kw}}" required="required"/>
 			</div>
@@ -504,17 +508,20 @@
 				<script>
 					insertMetric("monthlySummaryTable","Total Peak Demand (kW)", allOutputData.monthlyPeakDemand)
 					insertMetric("monthlySummaryTable","Total Adjusted Peak Demand (kW)", allOutputData.monthlyAdjustedPeakDemand)
+					insertMetric("monthlySummaryTable","Demand Charge ($)", allOutputData.monthlyPeakDemandCost)
+					insertMetric("monthlySummaryTable","Adjusted Demand Charge ($)", allOutputData.monthlyAdjustedPeakDemandCost)
+					insertMetric("monthlySummaryTable","Demand Cost Savings ($)", allOutputData.monthlyPeakDemandSavings)
 					insertMetric("monthlySummaryTable","Energy (kWh)", allOutputData.monthlyEnergyConsumption)
 					insertMetric("monthlySummaryTable","Adjusted Energy (kWh)", allOutputData.monthlyAdjustedEnergyConsumption)
 					insertMetric("monthlySummaryTable","Energy Cost ($)", allOutputData.monthlyEnergyConsumptionCost)
 					insertMetric("monthlySummaryTable","Adjusted Energy Cost ($)", allOutputData.monthlyAdjustedEnergyConsumptionCost)
 					insertMetric("monthlySummaryTable","Energy Cost Savings ($)", allOutputData.monthlyEnergyConsumptionSavings)
-					insertMetric("monthlySummaryTable","Demand Charge ($)", allOutputData.monthlyPeakDemandCost)
-					insertMetric("monthlySummaryTable","Adjusted Demand Charge ($)", allOutputData.monthlyAdjustedPeakDemandCost)
 					insertMetric("monthlySummaryTable","Total Cost of Service ($)", allOutputData.monthlyTotalCostService)
 					insertMetric("monthlySummaryTable","Adjusted Total Cost of Service ($)", allOutputData.monthlyTotalCostAdjustedService)
 					insertMetric("monthlySummaryTable","Total Consumer Compensation ($)", allOutputData.totalCost_paidToConsumer)
 					insertMetric("monthlySummaryTable","Program Startup and Operational Costs ($)", allOutputData.startupAndOperationalCosts_year1)
+					insertMetric("monthlySummaryTable","Total Utility Savings ($)", allOutputData.totalSavings_year1)
+					insertMetric("monthlySummaryTable","Total Utility Costs ($)", allOutputData.totalCosts_year1)
 					insertMetric("monthlySummaryTable","Net Utility Savings ($)", allOutputData.totalNetSavings_year1)
 					//insertMetric("monthlySummaryTable","1 kW Consumer Savings ($)", allOutputData.totalSavingsSmallConsumer)
 					//insertMetric("monthlySummaryTable","10 kW Consumer Savings ($)", allOutputData.totalSavingsLargeConsumer)
