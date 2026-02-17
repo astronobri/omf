@@ -26,38 +26,6 @@ tooltip = ('The derUtilityCost model evaluates the financial costs of controllin
 modelName, template = __neoMetaModel__.metadata(__file__)
 hidden = True ## Keep the model hidden=True during active development
 
-## NOTE & TODO: This function needs development. The purpose of this function is to handle both the energy rate structure and the demand charge rate structure from the .json response file, whereas the construct_energy_rate_array() function only handles the energy rate structure information.
-#def construct_energy_rate_array(response_file, timestamps):
-#	"""
-#	Constructs hourly rate arrays (length 8760) for TOU Energy Charges ($/kWh), TOU Demand Charges ($/kW), and fixed monthly facility demand charges ($/kW/month).
-#	Inputs:
-#	- response_file (JSON): File generated from the NREL REopt Custom Tariff Builder (requires a free account) https://reopt.nrel.gov/tool/custom_tariffs/new which contains information abou the TOU Energy Charges, TOU Demand Charges, and facility demand charges if applicable.
-#	- timestamps (array, length 8760): Hourly timestamps for the year used to identify the proper weekdays and weekends when building the rate schedules.
-#
-#	Returns:
-#	- energy_rate_array (array, length 8760, units: $/kW): The hourly energy rates ($/kWh) for an entire year
-#
-#	"""
-#
-#	energy_rate_array = np.zeros(8760)
-#	if 'energyratestructure' in response_file:
-#		## The energy rate structure refers to a nested list of dictionary items with "rate" and "unit" keys
-#		## For example: response_file['energyratestructure'] = [[{'rate': 0, 'unit': 'kWh'}], [{'rate': 0.06, 'unit': 'kWh'}], [{'rate': 0.1525, 'unit': 'kWh'}]]
-#		## Must first flatten the nested list of dictionary objects and extract the rate information for index-based access
-#		energy_weekday_schedule = response_file['energyweekdayschedule']
-#		energy_weekend_schedule = response_file['energyweekendschedule']
-#		energy_rate_structure_flattened = [item[0] for item in response_file['energyratestructure']]
-#		energy_rates = [item['rate'] for item in energy_rate_structure_flattened]
-#		
-#		## Construct an array of 8760 elements representing the hourly energy rates ($/kWh) for the entire year
-#		for hour_index, date in enumerate(timestamps):
-#			if date.weekday() < 5:  ## Weekdays (Monday=0, Sunday=7) - use the weekday rate schedule
-#				energy_rate_array[hour_index] = energy_rates[energy_weekday_schedule[date.month-1][date.hour]] ## NOTE: date.month is offset by 1 due to 0 indexing
-#			else: ## Weekends - use the weekend rate schedule
-#				energy_rate_array[hour_index] = energy_rates[energy_weekend_schedule[date.month-1][date.hour]]
-#
-#	return energy_rate_array
-
 def calculate_fval(peak_demands, adjusted_peak_demands, DER_contribution):
 	""" 
 	Calculates linear scaling factor, Fval, to quantify the impact of DERs on the total peak demand savings when the peak is shifted by the contribution from DERs.
@@ -188,9 +156,12 @@ def work(modelDir, inputDict):
 	########################################################################################################################
 	## Handle and save user input files
 	########################################################################################################################
-	
 	## Remove old input files if necessary
-	inputFileNames = ['input_demand.csv', 'input_temperature.csv', 'input_wholesale_energy_rate_structure.json','input_wholesale_rate_curve.csv','input_monthly_demand_charges.csv']
+	inputFileNames = ['input_demand.csv', 'input_temperature.csv', 'input_wholesale_energy_rate_structure.json',
+				'input_wholesale_rate_curve.csv','input_monthly_demand_charges.csv',
+				'vbatDispatch_inputs_ac.json', 'vbatDispatch_results_ac.json', 
+				'vbatDispatch_inputs_hp.json', 'vbatDispatch_results_hp.json',
+				'vbatDispatch_inputs_wh.json', 'vbatDispatch_results_wh.json']
 	for FileName in inputFileNames:
 		try:
 			os.remove(pJoin(modelDir, FileName))
@@ -423,14 +394,16 @@ def work(modelDir, inputDict):
 	########################################################################################################################
 	## Run REopt.jl
 	########################################################################################################################
-	reopt_jl.run_reopt_jl(modelDir, 'reopt_input_scenario.json')
+	reopt_jl.run_reopt_jl(modelDir, 'reopt_input_scenario.json', run_with_sysimage=False)#, tolerance=10.0)#, random_seed=420)
 
-	## Load the REopt results once it is finished running.
-	## TODO: Add warnings here to handle when REopt does not produce an output or gives an error
-	with open(pJoin(modelDir, 'results.json')) as jsonFile:
-		reoptResults = json.load(jsonFile)
-	outData.update(reoptResults) ## Update output file with reopt results
-	reoptErrorMsgs = reoptResults['Messages']['errors']
+	## Load the REopt results once it is finished running
+	try: 
+		with open(pJoin(modelDir, 'results.json')) as jsonFile:
+			reoptResults = json.load(jsonFile)
+		outData.update(reoptResults) ## Update output file with reopt results
+		reoptErrorMsgs = reoptResults['Messages']['errors']
+	except FileNotFoundError:
+		raise Exception(f'REopt did not produce any results. An error may have occurred.')
 
 	## Check if DER technology is enabled by the user and define relevant variables from REopt
 	if BESScheck == 'enabled':
@@ -476,8 +449,12 @@ def work(modelDir, inputDict):
 		'demandCurve': inputDict['demandCurve'],
 		'temperatureCurve': '\n'.join(f"{temperature:.2f}" for temperature in temperatures_degC), ## Convert temperatures_degC into the expected format for vbatDispatch
 		'energyRateCurve': '\n'.join(f"{rate:.2f}" for rate in energy_rate_array), ## Convert energy_rate_array into the expected format for vbatDispatch
+		'set_random_numbers': inputDict['set_random_numbers'],
+		'random_seed_PuLP': inputDict['random_seed_PuLP'],
+		'randomNumbersFileName': inputDict['randomNumbersFileName'],
+		'randomNumbers': inputDict['randomNumbers'],
 	}
-	
+
 	## Define thermal variables that change depending on the thermal technology(ies) enabled by the user
 	thermal_suffixes = ['_hp', '_ac', '_wh'] ## heat pump, air conditioner, water heater - (Add more suffixes here after establishing inputs in the defaultInputs and derUtilityCost.html)
 	thermal_variables=['load_type','number_devices','power','capacitance','resistance','cop','setpoint','deadband','TESS_subsidy_ongoing','TESS_subsidy_onetime']
@@ -494,27 +471,114 @@ def work(modelDir, inputDict):
 				inputDict_vbatDispatch[i] = inputDict[i+suffix]
 
 			## Create a model subdirectory for each thermal device and store the vbatDispatch results there
-			newDir = pJoin(modelDir,'vbatDispatch_results'+suffix)
-			os.makedirs(newDir, exist_ok=True)
-			os.chdir(newDir) ##jump into the newly created subdirectory
+			#newDir = pJoin(modelDir,'vbatDispatch_results'+suffix)
+			#os.makedirs(newDir, exist_ok=True)
+			#os.chdir(newDir) ##jump into the newly created subdirectory
 
+			## Save the vbatDispatch inputs
+			with open(pJoin(modelDir, 'vbatDispatch_inputs'+suffix+'.json'), 'w') as jsonFile:
+				json.dump(inputDict_vbatDispatch, jsonFile)
+			
 			## Run vbatDispatch for the thermal device
 			vbatResults = vb.work(modelDir,inputDict_vbatDispatch)
-			with open(pJoin(newDir, 'vbatResults.json'), 'w') as jsonFile:
-				json.dump(vbatResults, jsonFile)
 			
 			## Update the vbatResults to include subsidies (for easier usage later)
 			vbatResults['TESS_subsidy_onetime'] = float(inputDict_vbatDispatch['TESS_subsidy_onetime'])*float(inputDict['number_devices'+suffix])
 			vbatResults['TESS_subsidy_ongoing'] = float(inputDict_vbatDispatch['TESS_subsidy_ongoing'])*float(inputDict['number_devices'+suffix])
 
+			## Save the vbatDispatch results
+			with open(pJoin(modelDir, 'vbatDispatch_results'+suffix+'.json'), 'w') as jsonFile:
+				json.dump(vbatResults, jsonFile)
+			
 			## Store the results in all_device_results dictionary
 			single_device_results['vbatResults'+suffix] = vbatResults
 
 			## Go back to the main derUtilityCost model directory and continue on
-			os.chdir(modelDir)
+			#os.chdir(modelDir)
 	
+
 	########################################################################################################################
-	## TESS technology combined and individual calculations
+	## Enact prioritization of TESS devices when there is competition for charge time 
+	## NOTE: Competing charge of TESS technologies can potentially cause a higher, more expensive monthly peak demand.
+	## The TESS results are decoupled from each other, since each technology is ran separately with omf.models.vbatDispatch.
+	########################################################################################################################
+	vbat_power_df = pd.DataFrame(index=None)
+	charging_devices = []
+
+	## Separate out the charging and discharging arrays for each TESS device enabled by the user
+	for device_name in single_device_results:
+		single_device_vbatPower = single_device_results[device_name]['VBpower']
+		single_device_vbatPower_series = pd.Series(single_device_vbatPower)
+		single_device_vbatPower_series.replace(-0.0, 0.0, inplace=True)
+		charge_component = single_device_vbatPower_series.where(single_device_vbatPower_series < 0.0, 0.0) * -1.0
+		discharge_component = single_device_vbatPower_series.where(single_device_vbatPower_series > 0.0, 0.0)
+		vbat_power_df[device_name + '_totalpower'] = single_device_vbatPower_series
+		vbat_power_df[device_name + '_charging'] = charge_component.replace(-0.0, 0.0)
+		vbat_power_df[device_name + '_discharging'] = discharge_component
+		charging_devices.append(device_name + '_charging') ## record the names of the TESS technologies that will be charging
+
+	#vbat_power_df_copy = vbat_power_df.copy(deep=True) ## Verify this copy with the adjusted df below to ensure prioritization is working
+	
+	priority_tech = ['vbatResults_wh_charging', 'vbatResults_ac_charging', 'vbatResults_hp_charging'] ## This is hard-coded for the TESS tech priority order (WH > AC > HP). TODO: allow the user to specify their own priority order in the future
+	available_priority_tech = [tech for tech in priority_tech if tech in charging_devices] ## Among the TESS devices available to charge, sort the devices according to the priority order.
+
+	## Create a priority order mapping between the tech name (str) and an integer (0,1,2) so Python can work with it
+	priority_order = {key: i for i, key in enumerate(priority_tech)}
+
+	## Define a function to adjust charges and discharges
+	def adjust_charging_and_discharging(df, priority_order):
+		"""
+		Adjusts the charging and discharging arrays for TESS technologies that compete for charge time.
+		When two or more TESS technologies compete for charge time at a given hour, the highest priority tech will prevail. All other low priority tech will have the charge (kW) set to zero, and subsequent discharge will be removed to reflect the amount of charge that was removed.
+		Inputs:
+		- df (dataFrame): Contains the hourly charging, discharging, and total power columns for each TESS technology for an entire year.
+		- priority_order (dict): Priority order mapping between the tech name and the priority number with 0 corresponding to the highest priority technology (e.g. {vbatResults_wh_charging: 0, vbatResults_ac_charging: 1}).
+
+		"""
+		for index in df.index:
+			competing_technologies = [tech for tech in available_priority_tech if df.at[index, tech] > 0]
+
+			if len(competing_technologies) > 1:
+				## Identify the highest priority technology
+				highest_priority_tech = sorted(competing_technologies, key=lambda x: priority_order[x])[0]
+				charge_removal_amounts = {tech: df.at[index, tech] for tech in competing_technologies if tech != highest_priority_tech}
+
+				## Process lower priority technologies
+				for tech, amount in charge_removal_amounts.items():
+					discharge_col_name = tech.replace('charging', 'discharging')
+					df.at[index, tech] = 0  ## Set charge to zero at the current index
+
+					## Accumulate the amount of discharge to be removed
+					total_charge_removed = amount
+
+					## Iterate through subsequent indices to remove the discharge up to and including the amount of charge that was removed
+					next_index = index + 1
+					while total_charge_removed > 0 and next_index < len(df):
+						current_discharging = df.at[next_index, discharge_col_name]
+						if current_discharging > 0:
+							if current_discharging <= total_charge_removed:
+								total_charge_removed -= current_discharging
+								df.at[next_index, discharge_col_name] = 0  ## Remove all discharge
+							else:
+								df.at[next_index, discharge_col_name] -= total_charge_removed
+								total_charge_removed = 0  ## Discharge removal met
+						next_index += 1
+
+		## Update the total power for each technology
+		for tech in available_priority_tech:
+			discharge_col_name = tech.replace('charging', 'discharging')
+			total_power_col_name = tech.replace('charging', 'totalpower')
+			df[total_power_col_name] = df[discharge_col_name] - df[tech]  ## New total power (after priority adjustments) = discharge - charge 
+		return df
+
+	## The adjusted dataframe for all TESS technolgies based on the priority charging order
+	## NOTE: This method is used to account for the TESS tech being decoupled from each other and causing new, expensive peak demands due to technologies charging at the same time.
+	adjusted_vbat_power_df = adjust_charging_and_discharging(vbat_power_df, priority_order)
+
+
+	########################################################################################################################
+	## Individual and combined Thermal Energy Storage System (TESS) technology calculations 
+	## (e.g Water Heater, Heat Pump, Air Conditioner)
 	########################################################################################################################
 	## Define the consumption rate compensation ($/kWh) paid to member-consumers
 	#consumptionCost = float(inputDict['electricityCost'])
@@ -547,7 +611,7 @@ def work(modelDir, inputDict):
 	thermal_device_savings = {}
 	## Combine all thermal device variable data for plotting
 	for device_result in single_device_results:
-		single_device_vbatPower = single_device_results[device_result]['VBpower']
+		single_device_vbatPower = adjusted_vbat_power_df[device_result+'_totalpower']
 		single_device_vbatPower_series = pd.Series(single_device_vbatPower)
 		combined_device_results['vbatPower'] = [sum(x) for x in zip(combined_device_results['vbatPower'], single_device_vbatPower)]
 		combined_device_results['vbatMinEnergyCapacity'] = [sum(x) for x in zip(combined_device_results['vbatMinEnergyCapacity'], single_device_results[device_result]['minEnergySeries'])]
@@ -575,9 +639,10 @@ def work(modelDir, inputDict):
 	## Calculate the subsidies, compensation rate, and consumption cost (kWh) for each individual thermal tech device
 	## NOTE: This loop must come after the calculation of the combined TESS devices in order to correctly calculate the single_device_vbat_discharge/charge components
 	for device_result in single_device_results:
-		single_device_vbatPower = single_device_results[device_result]['VBpower']
-		single_device_vbatPower_series.replace(-0.0, 0.0, inplace=True) ## replace negative zeros with positive zeros
+		single_device_vbatPower = adjusted_vbat_power_df[device_result+'_totalpower']
 		single_device_vbatPower_series = pd.Series(single_device_vbatPower)
+		single_device_vbatPower_series.replace(-0.0, 0.0, inplace=True) ## replace negative zeros with positive zeros
+		
 		## select out the individual TESS discharge/charge values where the sum total TESS discharge/charge is collectively discharging/charging
 		single_device_vbat_discharge_component = single_device_vbatPower_series.where(combined_TESS_vbatPower_series >= 0.0, 0.0) ##positive values = discharging 
 		single_device_vbat_charge_component = single_device_vbatPower_series.where(combined_TESS_vbatPower_series < 0.0, 0.0) ##negative values = charging
@@ -585,6 +650,7 @@ def work(modelDir, inputDict):
 		## select out the original individual TESS discharge/charge values
 		orig_single_device_vbat_discharge_component = single_device_vbatPower_series.where(single_device_vbatPower_series > 0.0, 0.0) ##positive values = discharging 
 		orig_single_device_vbat_charge_component_flipsign = single_device_vbatPower_series.where(single_device_vbatPower_series < 0.0, 0.0) * -1.0 ##negative values = charging. multiply by -1 for plotting purposes
+		orig_single_device_vbat_charge_component_flipsign.replace(-0.0, 0.0, inplace=True) ## replace negative zeros with positive zeros
 
 		## Calculate subsidy for each thermal DER technology
 		single_device_subsidy_ongoing = float(single_device_results[device_result]['TESS_subsidy_ongoing'])
@@ -1519,6 +1585,8 @@ def new(modelDir):
 	#responseFilename = 'TOUrate5b311c595457a3496d8367be.json' ## TOU rate JSON file (created using instructions from https://github.com/NREL/REopt-Analysis-Scripts/wiki/5.-Custom-Electric-Rates)
 	with open(pJoin(__neoMetaModel__._omfDir,'static','testFiles','derUtilityCost','utility_monthly_demand_charges.csv')) as f:
 		monthly_demand_charges = f.read()
+	with open(pJoin(__neoMetaModel__._omfDir,'static','testFiles','derUtilityCost','water_heater_random_numbers.csv')) as f:
+		random_numbers = f.read()
 
 	defaultInputs = {
 		## TODO: maybe incorporate float, int, bool types on the html side instead of only strings
@@ -1579,6 +1647,9 @@ def new(modelDir):
 		'operationalCosts_ongoing': '1000.0',
 		'operationalCosts_onetime': '20000.0',
 
+		## Thermal Technology Random Seed Settings
+		'random_seed_PuLP': '1000000',
+		
 		## Home Air Conditioner inputs (for vbatDispatch):
 		'load_type_ac': '1', 
 		'number_devices_ac': '33000',
@@ -1601,6 +1672,9 @@ def new(modelDir):
 
 		## Home Water Heater inputs (for vbatDispatch):
 		'load_type_wh': '4', 
+		'set_random_numbers': 'Yes',
+		'randomNumbersFileName': 'water_heater_random_numbers.csv',
+		'randomNumbers': random_numbers,
 		'number_devices_wh': '33000',
 		'power_wh': '4.5',
 		'capacitance_wh': '0.4',
