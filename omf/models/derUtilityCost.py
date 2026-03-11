@@ -206,7 +206,8 @@ def work(modelDir, inputDict):
 				'input_wholesale_rate_curve.csv','input_monthly_demand_charges.csv',
 				'vbatDispatch_inputs_ac.json', 'vbatDispatch_results_ac.json', 
 				'vbatDispatch_inputs_hp.json', 'vbatDispatch_results_hp.json',
-				'vbatDispatch_inputs_wh.json', 'vbatDispatch_results_wh.json']
+				'vbatDispatch_inputs_wh.json', 'vbatDispatch_results_wh.json',
+				'PuLP_random_seeds.csv']
 	for FileName in inputFileNames:
 		try:
 			os.remove(pJoin(modelDir, FileName))
@@ -394,28 +395,28 @@ def work(modelDir, inputDict):
 		scenario['ElectricTariff']['monthly_demand_rates'] = peakDemandCharge.tolist()
 
 	## Add fossil fuel generator to input scenario, if enabled
-	if inputDict['fossilGenerator'] == 'Yes' and float(inputDict['number_devices_GEN']) > 0:
+	if inputDict['fossilGenerator'] == 'Yes' and int(inputDict['number_devices_GEN']) > 0:
 		GENcheck = 'enabled'
 		scenario['Generator'] = {
-			'existing_kw': float(inputDict['existing_gen_kw']) * float(inputDict['number_devices_GEN']),
+			'existing_kw': float(inputDict['existing_gen_kw']) * int(inputDict['number_devices_GEN']),
 			'max_kw': 0.0, ## New generator minumum
 			'min_kw': 0.0, ## New generator maximum
 			'only_runs_during_grid_outage': False,
-			'fuel_avail_gal': float(inputDict['fuel_avail']) * float(inputDict['number_devices_GEN']),
+			'fuel_avail_gal': float(inputDict['fuel_avail']) * int(inputDict['number_devices_GEN']),
 			'fuel_cost_per_gallon': float(inputDict['fuel_cost']),
 		}
 	else:
 		GENcheck = 'disabled'
 
 	## Add a Battery Energy Storage System (BESS) section to REopt input scenario, if enabled 
-	if inputDict['enableBESS'] == 'Yes' and float(inputDict['number_devices_BESS']) > 0:
+	if inputDict['enableBESS'] == 'Yes' and int(inputDict['number_devices_BESS']) > 0:
 		BESScheck = 'enabled'
 		utility_BESS_fraction = float(inputDict['utility_BESS_portion'])/100. ## convert percentage to decimal (e.g. 20% -> 0.20)
 		scenario['ElectricStorage'] = {
-			'min_kw': float(inputDict['BESS_kw']) * float(inputDict['number_devices_BESS']) * utility_BESS_fraction,
-			'max_kw': float(inputDict['BESS_kw']) * float(inputDict['number_devices_BESS']) * utility_BESS_fraction,
-			'min_kwh': float(inputDict['BESS_kwh']) * float(inputDict['number_devices_BESS']) * utility_BESS_fraction,
-			'max_kwh': float(inputDict['BESS_kwh']) * float(inputDict['number_devices_BESS']) * utility_BESS_fraction,
+			'min_kw': float(inputDict['BESS_kw']) * int(inputDict['number_devices_BESS']) * utility_BESS_fraction,
+			'max_kw': float(inputDict['BESS_kw']) * int(inputDict['number_devices_BESS']) * utility_BESS_fraction,
+			'min_kwh': float(inputDict['BESS_kwh']) * int(inputDict['number_devices_BESS']) * utility_BESS_fraction,
+			'max_kwh': float(inputDict['BESS_kwh']) * int(inputDict['number_devices_BESS']) * utility_BESS_fraction,
 			'can_grid_charge': True,
 			'total_rebate_per_kw': 0.0,
 			'macrs_option_years': 0,
@@ -495,14 +496,14 @@ def work(modelDir, inputDict):
 		'temperatureCurve': '\n'.join(f'{temperature:.2f}' for temperature in temperatures_degC), ## Convert temperatures_degC into the expected format for vbatDispatch
 		'energyRateCurve': '\n'.join(f'{rate:.2f}' for rate in energy_rate_array), ## Convert energy_rate_array into the expected format for vbatDispatch
 		'set_random_numbers': inputDict['set_random_numbers'],
-		'random_seed_PuLP': inputDict['random_seed_PuLP'],
+		#'random_seed_PuLP': inputDict['random_seed_PuLP'],
 		'randomNumbersFileName': inputDict['randomNumbersFileName'],
 		'randomNumbers': inputDict['randomNumbers'],
 	}
 
 	## Define thermal variables that change depending on the thermal technology(ies) enabled by the user
-	thermal_suffixes = ['_hp', '_ac', '_wh'] ## heat pump, air conditioner, water heater - (Add more suffixes here after establishing inputs in the defaultInputs and derUtilityCost.html)
-	thermal_variables=['load_type','number_devices','power','capacitance','resistance','cop','setpoint','deadband','TESS_subsidy_ongoing','TESS_subsidy_onetime']
+	thermal_suffixes = ['_ac', '_hp', '_wh'] ## heat pump, air conditioner, water heater - (Add more suffixes here after establishing inputs in the defaultInputs and derUtilityCost.html)
+	thermal_variables=['load_type','number_devices','power','capacitance','resistance','cop','setpoint','deadband','TESS_subsidy_ongoing','TESS_subsidy_onetime','random_seed_PuLP']
 
 	all_device_suffixes = []
 	single_device_results = {} 
@@ -528,13 +529,23 @@ def work(modelDir, inputDict):
 			vbatResults = vb.work(modelDir,inputDict_vbatDispatch)
 			
 			## Update the vbatResults to include subsidies (for easier usage later)
-			vbatResults['TESS_subsidy_onetime'] = float(inputDict_vbatDispatch['TESS_subsidy_onetime'])*float(inputDict['number_devices'+suffix])
-			vbatResults['TESS_subsidy_ongoing'] = float(inputDict_vbatDispatch['TESS_subsidy_ongoing'])*float(inputDict['number_devices'+suffix])
+			vbatResults['TESS_subsidy_onetime'] = float(inputDict_vbatDispatch['TESS_subsidy_onetime'])*int(inputDict['number_devices'+suffix])
+			vbatResults['TESS_subsidy_ongoing'] = float(inputDict_vbatDispatch['TESS_subsidy_ongoing'])*int(inputDict['number_devices'+suffix])
 
 			## Save the vbatDispatch results
 			with open(pJoin(modelDir, 'vbatDispatch_results'+suffix+'.json'), 'w') as jsonFile:
 				json.dump(vbatResults, jsonFile)
 			
+			## Save the PuLP random seed to the ouput file
+			if suffix == '_hp':
+				tech_name = 'Heat Pump'
+			if suffix == '_wh':
+				tech_name = 'Water Heater'
+			if suffix == '_ac':
+				tech_name = 'Air Conditioner'
+			with open(pJoin(modelDir, 'PuLP_random_seeds.csv'), 'a') as f:
+				f.write(tech_name + ': ' + str(vbatResults['random_seed_PuLP'] + '\n'))
+
 			## Store the results in all_device_results dictionary
 			single_device_results['vbatResults'+suffix] = vbatResults
 
@@ -1093,15 +1104,15 @@ def work(modelDir, inputDict):
 
 	## If the DER tech is disabled or the discharge array is empty, then set all its subsidies equal to zero.
 	if BESScheck == 'enabled' and np.sum(BESS) > 0.0:
-		BESS_subsidy_ongoing = float(inputDict['BESS_subsidy_ongoing'])*float(inputDict['number_devices_BESS'])
-		BESS_subsidy_onetime = float(inputDict['BESS_subsidy_onetime'])*float(inputDict['number_devices_BESS'])
+		BESS_subsidy_ongoing = float(inputDict['BESS_subsidy_ongoing'])*int(inputDict['number_devices_BESS'])
+		BESS_subsidy_onetime = float(inputDict['BESS_subsidy_onetime'])*int(inputDict['number_devices_BESS'])
 	else:
 		BESS_subsidy_ongoing = 0
 		BESS_subsidy_onetime = 0
 
 	if GENcheck == 'enabled' and np.sum(generator) > 0.0:
-		GEN_subsidy_ongoing = float(inputDict['GEN_subsidy_ongoing'])*float(inputDict['number_devices_GEN'])
-		GEN_subsidy_onetime = float(inputDict['GEN_subsidy_onetime'])*float(inputDict['number_devices_GEN'])
+		GEN_subsidy_ongoing = float(inputDict['GEN_subsidy_ongoing'])*int(inputDict['number_devices_GEN'])
+		GEN_subsidy_onetime = float(inputDict['GEN_subsidy_onetime'])*int(inputDict['number_devices_GEN'])
 	else:
 		GEN_subsidy_ongoing = 0
 		GEN_subsidy_onetime = 0
@@ -1233,10 +1244,12 @@ def work(modelDir, inputDict):
 	outData['totalCost_paidToConsumer'] = allDevices_subsidy_year1_monthly_array.tolist()
 	startup_and_operational_costs_year1_array = startupCosts_year1_monthly_array + operationalCosts_year1_monthly_array ## Combine the startup and operational costs for displaying in the Monthly Cost Comparison table
 	outData['startupAndOperationalCosts_year1'] = startup_and_operational_costs_year1_array.tolist()
+	
+	## Monthly Cost Comparison Chart utility costs, utility savings, utility net savings
 	outData['totalCosts_year1'] = utilityCosts_year1_monthly_array.tolist()
 	outData['totalSavings_year1'] = utilitySavings_year1_monthly_array.tolist()
-	outData['totalNetSavings_year1'] = utilityNetSavings_year1_array.tolist() ## (total cost of service - adjusted total cost of service) - (operational costs + subsidies + compensation to consumer + startup costs)
-	
+	outData['totalNetSavings_year1'] = utilityNetSavings_year1_array.tolist() ## (total cost of service - adjusted total cost of service) - (operational costs + subsidies + startup costs)
+
 	## NOTE: The following are not used in the output HTML plot, but could potentially be useful later
 	#outData['operationalCosts_allyears'] = list(operationalCosts_allyears_array*-1.)
 	#outData['operationalCosts_year1'] = list(operationalCosts_year1_array*-1.)
@@ -1592,6 +1605,14 @@ def new(modelDir):
 		'modelType': modelName,
 		'created': str(datetime.datetime.now()),
 
+		## General Model Inputs:
+		'set_random_numbers': 'Yes',
+		'randomNumbersFileName': 'water_heater_random_numbers.csv',
+		'randomNumbers': random_numbers,
+		'random_seed_PuLP_ac': '2581590327', #max=10000000000
+		'random_seed_PuLP_hp': '4757181440', #max=10000000000
+		'random_seed_PuLP_wh': '7148702924', #max=10000000000
+
 		## REopt inputs:
 		'latitude': '39.969753', ## Brighton, CO
 		'longitude': '-104.812599', ## Brighton, CO
@@ -1607,7 +1628,7 @@ def new(modelDir):
 		'wholesaleRateStructure': wholesale_rate_structure,
 		'monthlyDemandChargesFileName': 'utility_monthly_demand_charges.csv',
 		'monthlyDemandCharges': monthly_demand_charges,
-		
+
 		## Fossil Fuel Generator Inputs (for REopt)
 		## Modeled after Generac 20 kW diesel model with max tank of 95 gallons
 		'fossilGenerator': 'No',
@@ -1642,9 +1663,6 @@ def new(modelDir):
 		'GEN_subsidy_ongoing': '5.0',
 		'operationalCosts_ongoing': '1000.0',
 		'operationalCosts_onetime': '20000.0',
-
-		## Thermal Technology Random Seed Settings
-		'random_seed_PuLP': '1000000',
 		
 		## Home Air Conditioner inputs (for vbatDispatch):
 		'load_type_ac': '1', 
@@ -1668,9 +1686,6 @@ def new(modelDir):
 
 		## Home Water Heater inputs (for vbatDispatch):
 		'load_type_wh': '4', 
-		'set_random_numbers': 'Yes',
-		'randomNumbersFileName': 'water_heater_random_numbers.csv',
-		'randomNumbers': random_numbers,
 		'number_devices_wh': '33000',
 		'power_wh': '4.5',
 		'capacitance_wh': '0.4',
