@@ -5,7 +5,7 @@ Source options include NOAA's USCRN, Iowa State University's METAR, and Weather 
 
 
 import os, csv, re, json, sys
-from math import sqrt, exp, cos, radians
+from math import sqrt, exp, cos, radians, sin, acos, degrees, pi
 import numpy as np
 from os.path import join as pJoin
 import datetime as dt
@@ -17,10 +17,8 @@ from omf import feeder
 import platform
 import pandas as pd
 from tempfile import mkdtemp
-import pysolar
 import pytz
 import xml.etree.ElementTree as ET
-import xmltodict
 from pathlib import Path
 
 omfDir = os.path.dirname(os.path.abspath(__file__))
@@ -1019,11 +1017,44 @@ def _getPWCloudCoverForYear(year='2018', lat=30.581736, lon=-98.024098, key=_key
 	return cloudCoverByHour, pressureByHour
 
 
+def _localized_datetime(datetime, timezone):
+    tz = pytz.timezone(timezone)
+    if datetime.tzinfo is not None and datetime.utcoffset() is not None:
+        return datetime.astimezone(tz)
+    return tz.localize(datetime)
+
+
 def getSolarZenith(lat, lon, datetime, timezone):
-    date = pytz.timezone(timezone).localize(datetime)
-    solar_altitude = pysolar.solar.get_altitude(lat,lon,date)
-    solar_zenith = 90 - solar_altitude
-    return solar_zenith
+    '''Return solar zenith angle in degrees using NOAA's declination/equation-of-time approximation.'''
+    date = _localized_datetime(datetime, timezone)
+    minutes = date.hour * 60 + date.minute + date.second / 60 + date.microsecond / 60000000
+    gamma = 2 * pi / 365 * (date.timetuple().tm_yday - 1 + (minutes / 60 - 12) / 24)
+    equation_of_time = 229.18 * (
+        0.000075 +
+        0.001868 * cos(gamma) -
+        0.032077 * sin(gamma) -
+        0.014615 * cos(2 * gamma) -
+        0.040849 * sin(2 * gamma)
+    )
+    declination = (
+        0.006918 -
+        0.399912 * cos(gamma) +
+        0.070257 * sin(gamma) -
+        0.006758 * cos(2 * gamma) +
+        0.000907 * sin(2 * gamma) -
+        0.002697 * cos(3 * gamma) +
+        0.00148 * sin(3 * gamma)
+    )
+    timezone_offset = date.utcoffset().total_seconds() / 60
+    true_solar_time = (minutes + equation_of_time + 4 * lon - timezone_offset) % 1440
+    hour_angle = true_solar_time / 4 - 180
+    if hour_angle < -180:
+        hour_angle += 360
+    lat_rad = radians(lat)
+    hour_angle_rad = radians(hour_angle)
+    cos_zenith = sin(lat_rad) * sin(declination) + cos(lat_rad) * cos(declination) * cos(hour_angle_rad)
+    cos_zenith = min(1.0, max(-1.0, cos_zenith))
+    return degrees(acos(cos_zenith))
 
 
 def preparePredictionVectors(year='2018', lat=30.581736, lon=-98.024098, station='TX_Austin_33_NW', timezone='US/Central'):
@@ -1165,11 +1196,41 @@ def _ndfd_url(path=''):
 
 
 #This function acts as a general xml parser
+def _strip_xml_namespace(tag):
+	if '}' in tag:
+		return tag.split('}', 1)[1]
+	return tag
+
+
+def _xml_element_to_dict(element):
+	'''Convert ElementTree nodes into the dictionary shape this module consumes.'''
+	children = list(element)
+	attributes = {'@' + _strip_xml_namespace(k): v for k, v in element.attrib.items()}
+	text = (element.text or '').strip()
+	if not children:
+		if attributes:
+			if text:
+				attributes['#text'] = text
+			return attributes
+		return text
+	node = dict(attributes)
+	for child in children:
+		child_tag = _strip_xml_namespace(child.tag)
+		child_value = _xml_element_to_dict(child)
+		if child_tag in node:
+			if not isinstance(node[child_tag], list):
+				node[child_tag] = [node[child_tag]]
+			node[child_tag].append(child_value)
+		else:
+			node[child_tag] = child_value
+	if text:
+		node['#text'] = text
+	return node
+
+
 def _generalParseXml(data):
-	o = xmltodict.parse(data.content)
-	d = json.dumps(o)
-	d = json.loads(d)
-	return d
+	root = ET.fromstring(data.content)
+	return {_strip_xml_namespace(root.tag): _xml_element_to_dict(root)}
 
 def _run_ndfd_request(q):
 	print(_ndfd_url(q))
