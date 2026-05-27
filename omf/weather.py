@@ -1510,9 +1510,9 @@ def nsrbd_latlon_to_wkt(longitude, latitude):
     return f"POINT({lon_str} {lat_str})"
 
 
-def nrl_get_nsrdb_data(data_set: str, longitude: float, latitude: float, year: int, api_key, attributes=[], utc='true', leap_day='false', email='admin@omf.coop', interval=None, filename=None):
+def nlr_get_nsrdb_data(data_set: str, longitude: float, latitude: float, year: int, api_key, attributes=[], utc='true', leap_day='false', email='admin@omf.coop', interval=None, filename=None):
 	'''Create nsrdb factory and execute query. Optional output to file or return the response object.'''
-	base_url = 'https://developer.nrel.gov'
+	base_url = 'https://developer.nlr.gov'
 	request_url = ""
 	params = {}
 	params['api_key'] = api_key
@@ -1540,7 +1540,7 @@ def nrl_get_nsrdb_data(data_set: str, longitude: float, latitude: float, year: i
 	if data.status_code != 200:
 		# This means something went wrong.
 		print(f"URL: {data.url}")
-		raise Exception(f'nrl_get_nsrdb_data() :: API Request Failed :: status code: {data.status_code} ' + data.text)
+		raise Exception(f'nlr_get_nsrdb_data() :: API Request Failed :: status code: {data.status_code} ' + data.text)
 	csv_lines = [line.decode() for line in data.iter_lines()]
 	reader = csv.reader(csv_lines, delimiter=',')
 	if filename is not None:
